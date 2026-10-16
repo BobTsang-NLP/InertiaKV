@@ -8,10 +8,45 @@ import torch
 from torch import nn
 
 from kvpress.presses.scorer_press import ScorerPress
+from kvpress.utils import compute_n_kept
+
+
+class _TokenAlignedEMAMixin:
+    def post_init_from_model(self, model):
+        self.reset()
+        super().post_init_from_model(model)
+
+    def _update_ema_scores(self, layer_idx, current_scores):
+        previous_scores = self._ema_scores_by_layer.get(layer_idx)
+        ema_scores = current_scores.detach().clone()
+        if previous_scores is not None:
+            if previous_scores.shape[:-1] != current_scores.shape[:-1]:
+                raise ValueError("EMA batch/head dimensions changed; reset the press before reuse")
+            if previous_scores.shape[-1] > current_scores.shape[-1]:
+                raise ValueError("KV cache shortened outside EMA compression; reset the press")
+            history_length = previous_scores.shape[-1]
+            previous_scores = previous_scores.to(device=current_scores.device, dtype=current_scores.dtype)
+            ema_scores[..., :history_length] = (
+                self.alpha * previous_scores + (1.0 - self.alpha) * current_scores[..., :history_length]
+            )
+        self._ema_scores_by_layer[layer_idx] = ema_scores.detach().clone()
+        return ema_scores
+
+    def compress(self, module, hidden_states, keys, values, attentions, kwargs):
+        if self.compression_ratio == 0:
+            return keys, values
+        scores = self.score(module, hidden_states, keys, values, attentions, kwargs)
+        indices = scores.topk(compute_n_kept(keys.shape[2], self.compression_ratio), dim=-1).indices
+        gather_indices = indices.unsqueeze(-1).expand(-1, -1, -1, module.head_dim)
+        compressed_keys = keys.gather(2, gather_indices).contiguous()
+        compressed_values = values.gather(2, gather_indices).contiguous()
+        layer_idx = getattr(module, "layer_idx", -1)
+        self._ema_scores_by_layer[layer_idx] = scores.gather(-1, indices).detach().clone()
+        return compressed_keys, compressed_values
 
 
 @dataclass
-class EMAScorerPress(ScorerPress):
+class EMAScorerPress(_TokenAlignedEMAMixin, ScorerPress):
     """
     Generic exponential moving average wrapper for score-based presses.
 
@@ -37,6 +72,7 @@ class EMAScorerPress(ScorerPress):
         assert self.base_press is not None, "base_press must be provided"
 
     def post_init_from_model(self, model):
+        self.reset()
         self.base_press.compression_ratio = self.compression_ratio
         if hasattr(self.base_press, "post_init_from_model"):
             self.base_press.post_init_from_model(model)
@@ -52,14 +88,7 @@ class EMAScorerPress(ScorerPress):
     ) -> torch.Tensor:
         current_scores = self.base_press.score(module, hidden_states, keys, values, attentions, kwargs)
         layer_idx = getattr(module, "layer_idx", -1)
-        previous_scores = self._ema_scores_by_layer.get(layer_idx)
-        if previous_scores is None or previous_scores.shape != current_scores.shape:
-            ema_scores = current_scores.detach().clone()
-        else:
-            previous_scores = previous_scores.to(device=current_scores.device, dtype=current_scores.dtype)
-            ema_scores = self.alpha * previous_scores + (1.0 - self.alpha) * current_scores
-        self._ema_scores_by_layer[layer_idx] = ema_scores.detach().clone()
-        return ema_scores
+        return self._update_ema_scores(layer_idx, current_scores)
 
     def reset(self):
         self._ema_scores_by_layer = {}
