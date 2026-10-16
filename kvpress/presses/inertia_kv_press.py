@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import logging
+import math
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -862,7 +863,8 @@ class InertiaKVPress(BasePress):
     def _compute_last_query_attention(
         self, module: nn.Module, hidden_states: torch.Tensor, keys: torch.Tensor, kwargs: dict,
         values: torch.Tensor | None = None,
-    ) -> torch.Tensor:
+        return_entropy: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, float]:
         from kvpress.presses.snapkv_press import SnapKVPress
 
         # Ensure all tensors are on the same device (multi-GPU compatibility)
@@ -880,6 +882,12 @@ class InertiaKVPress(BasePress):
             module, hidden_states, keys, 1, position_embeddings
         )
         attn_last = attn_weights[:, :, -1, :]  # [batch, num_heads, kv_len]
+        entropy_weight = 1.0
+        if return_entropy:
+            full_attention = attn_last.float()
+            newest_attention = (1.0 - full_attention.sum(dim=-1, keepdim=True)).clamp(0.0, 1.0)
+            full_attention = torch.cat([full_attention, newest_attention], dim=-1)
+            entropy_weight = self._attention_entropy_weight(full_attention)
 
         # Apply value weighting if configured (same logic as _scores_from_attention)
         if self.value_weighting != "none" and values is not None:
@@ -906,7 +914,16 @@ class InertiaKVPress(BasePress):
         step_scores = torch.cat(
             [step_scores, torch.tensor([step_scores.max()], device=step_scores.device, dtype=step_scores.dtype)]
         )
-        return step_scores
+        return (step_scores, entropy_weight) if return_entropy else step_scores
+
+    @staticmethod
+    def _attention_entropy_weight(attention: torch.Tensor) -> float:
+        token_count = attention.shape[-1]
+        if token_count <= 1:
+            return 1.0
+        probabilities = attention.float()
+        entropy = -(probabilities * probabilities.clamp_min(1e-10).log()).sum(dim=-1).mean()
+        return float((entropy / math.log(token_count)).clamp(0.0, 1.0).item())
 
     def _pool_attention_heads(self, head_scores: torch.Tensor) -> torch.Tensor:
         # head_scores: [batch, num_heads, kv_len] or [num_heads, kv_len].
@@ -1341,18 +1358,7 @@ class InertiaKVPress(BasePress):
             # Compute entropy weight for this layer if enabled
             entropy_weight = 1.0
             if self.layer_entropy_weighting and attn is not None:
-                # attn shape: [batch, num_heads, q_len, kv_len]
-                attn_last = attn[:, :, -1, :]  # [batch, num_heads, kv_len]
-                # Compute entropy per head, then average
-                attn_clamped = attn_last.clamp(min=1e-10)
-                per_head_entropy = -(attn_clamped * attn_clamped.log()).sum(dim=-1)  # [batch, num_heads]
-                avg_entropy = per_head_entropy.mean().item()
-                # Normalize: max entropy = log(kv_len)
-                max_entropy = float(torch.tensor(float(kv_len)).log().item())
-                if max_entropy > 0:
-                    entropy_weight = avg_entropy / max_entropy  # 0~1, higher = more retrieval-like
-                else:
-                    entropy_weight = 1.0
+                entropy_weight = self._attention_entropy_weight(attn[:, :, -1, :])
 
             if attn is not None:
                 step_scores = self._scores_from_attention(attn, device, dtype, values=values, keys=keys)
@@ -1361,7 +1367,12 @@ class InertiaKVPress(BasePress):
             else:
                 try:
                     fallback_start = self._profile_start(device)
-                    step_scores = self._compute_last_query_attention(module, hidden_states, keys, kwargs, values=values)
+                    if self.layer_entropy_weighting:
+                        step_scores, entropy_weight = self._compute_last_query_attention(
+                            module, hidden_states, keys, kwargs, values=values, return_entropy=True
+                        )
+                    else:
+                        step_scores = self._compute_last_query_attention(module, hidden_states, keys, kwargs, values=values)
                     self._profile_add("attention_fallback_sec", fallback_start, device)
                     step_scores = step_scores.to(device=device, dtype=dtype)
                     if self._update_importance_scores(step_scores, entropy_weight):
