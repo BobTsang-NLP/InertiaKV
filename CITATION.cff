@@ -1,20 +1,25 @@
 cff-version: 1.2.0
-message: "If you use kvpress, please cite it as below."
+message: "If you use InertiaKV or its paper-specific experiments, please cite this paper. The upstream KVPress citation is retained separately in README.md."
 authors:
-authors:
-- family-names: "Jegou"
-  given-names: "Simon"
-- family-names: "Jeblick"
-  given-names: "Maximilian"
-- family-names: "Devoto"
-  given-names: "Alessio"
-title: "Expected Attention: KV Cache Compression by Estimating Attention from Future Queries Distribution"
-date-released: 2025-10-01
-year: 2025
-url: "https://arxiv.org/abs/2510.00636"
-repository-code: "https://github.com/NVIDIA/kvpress"
+- family-names: "Zeng"
+  given-names: "Bo"
+- family-names: "Zhao"
+  given-names: "Yu"
+- family-names: "Liu"
+  given-names: "Yefeng"
+- family-names: "Lu"
+  given-names: "Zhihong"
+- family-names: "Ni"
+  given-names: "Xuanfan"
+- family-names: "Wang"
+  given-names: "Xintong"
+title: "What Matters for Aggressive Decoding-Time KV Eviction? Temporal Aggregation and Ranking Preservation"
+date-released: 2026-09-03
+year: 2026
+url: "https://arxiv.org/abs/2609.03515"
+repository-code: "https://github.com/BobTsang-NLP/InertiaKV"
 type: article
 identifiers:
 - type: other
-  value: "arXiv:2510.00636"
+  value: "arXiv:2609.03515"
   description: "The ArXiv preprint of the paper"
