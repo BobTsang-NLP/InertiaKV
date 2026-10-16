@@ -7,11 +7,12 @@ from dataclasses import dataclass, field
 import torch
 from torch import nn
 
+from kvpress.presses.ema_scorer_press import _TokenAlignedEMAMixin
 from kvpress.presses.tova_press import TOVAPress
 
 
 @dataclass
-class TOVAEMAPress(TOVAPress):
+class TOVAEMAPress(_TokenAlignedEMAMixin, TOVAPress):
     """
     TOVA with an exponential moving average over token scores.
 
@@ -44,14 +45,7 @@ class TOVAEMAPress(TOVAPress):
     ) -> torch.Tensor:
         current_scores = super().score(module, hidden_states, keys, values, attentions, kwargs)
         layer_idx = getattr(module, "layer_idx", -1)
-        previous_scores = self._ema_scores_by_layer.get(layer_idx)
-        if previous_scores is None or previous_scores.shape != current_scores.shape:
-            ema_scores = current_scores.detach().clone()
-        else:
-            previous_scores = previous_scores.to(device=current_scores.device, dtype=current_scores.dtype)
-            ema_scores = self.alpha * previous_scores + (1.0 - self.alpha) * current_scores
-        self._ema_scores_by_layer[layer_idx] = ema_scores.detach().clone()
-        return ema_scores
+        return self._update_ema_scores(layer_idx, current_scores)
 
     def reset(self):
         self._ema_scores_by_layer = {}
