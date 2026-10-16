@@ -26,10 +26,13 @@ from kvpress import (
     DMSPress,
     DropKVPress,
     DuoAttentionPress,
+    EMAScorerPress,
     EntropyGatedChunkKVPress,
     ExpectedAttentionPress,
     FastKVzipPress,
     FinchPress,
+    InertiaKVPress,
+    InertiaLearnedPress,
     KeyDiffPress,
     KnormPress,
     KVComposePress,
@@ -47,6 +50,7 @@ from kvpress import (
     SnapKVPress,
     StreamingLLMPress,
     ThinKPress,
+    TOVAEMAPress,
     TOVAPress,
 )
 
@@ -139,4 +143,51 @@ PRESS_REGISTRY = {
     "merging_snapkv": MergingPress(SnapKVPress()),
     "merging_expected_attention": MergingPress(ExpectedAttentionPress(epsilon=1e-2)),
     "merging_kvzap_mlp": MergingPress(KVzapPress(model_type="mlp")),
+    # ----------------------------------------------------------
+    # InertiaKV (Ours)
+    # ----------------------------------------------------------
+    # Main variants
+    "inertiakv": InertiaKVPress(
+        rom_ratio=0.0,
+        use_first_large_evict_rescue=False,
+    ),
+    "inertiakv_lazy4": InertiaKVPress(
+        rom_ratio=0.0,
+        use_first_large_evict_rescue=False,
+        score_update_interval=4,
+    ),
+    "inertiakv_scorefree": InertiaKVPress(
+        rom_ratio=0.0,
+        use_first_large_evict_rescue=False,
+        score_update_interval=999999,
+    ),
+    # Auxiliary components
+    "inertiakv_auxiliary": InertiaKVPress(),
+    "inertiakv_reserve": InertiaKVPress(use_first_large_evict_rescue=False),
+    # Alpha sweep
+    "inertiakv_a00": InertiaKVPress(alpha=0.0, rom_ratio=0.0, use_first_large_evict_rescue=False),
+    "inertiakv_a03": InertiaKVPress(alpha=0.3, rom_ratio=0.0, use_first_large_evict_rescue=False),
+    "inertiakv_a06": InertiaKVPress(alpha=0.6, rom_ratio=0.0, use_first_large_evict_rescue=False),
+    "inertiakv_a08": InertiaKVPress(alpha=0.8, rom_ratio=0.0, use_first_large_evict_rescue=False),
+    "inertiakv_a09": InertiaKVPress(alpha=0.9, rom_ratio=0.0, use_first_large_evict_rescue=False),
+    "inertiakv_a095": InertiaKVPress(alpha=0.95, rom_ratio=0.0, use_first_large_evict_rescue=False),
+    # Scoring ablations
+    "inertiakv_vnorm": InertiaKVPress(rom_ratio=0.0, use_first_large_evict_rescue=False, value_weighting="vnorm"),
+    "inertiakv_entropy": InertiaKVPress(
+        rom_ratio=0.0, use_first_large_evict_rescue=False, layer_entropy_weighting=True
+    ),
+    "inertiakv_random": InertiaKVPress(rom_ratio=0.0, use_first_large_evict_rescue=False, random_eviction=True),
+    "h2o_style": InertiaKVPress(rom_ratio=0.0, score_accumulation="sum", use_first_large_evict_rescue=False),
+    "inertiakv_max": InertiaKVPress(rom_ratio=0.0, use_first_large_evict_rescue=False, score_accumulation="max"),
+    # Lazy refresh sweep
+    "inertiakv_lazy2": InertiaKVPress(rom_ratio=0.0, use_first_large_evict_rescue=False, score_update_interval=2),
+    "inertiakv_lazy8": InertiaKVPress(rom_ratio=0.0, use_first_large_evict_rescue=False, score_update_interval=8),
+    "inertiakv_lazy16": InertiaKVPress(rom_ratio=0.0, use_first_large_evict_rescue=False, score_update_interval=16),
+    "inertiakv_lazy32": InertiaKVPress(rom_ratio=0.0, use_first_large_evict_rescue=False, score_update_interval=32),
+    # EMA transferability
+    "decoding_tova_ema_a08": DecodingPress(base_press=TOVAEMAPress(alpha=0.8)),
+    "decoding_keydiff_ema_a08": DecodingPress(base_press=EMAScorerPress(base_press=KeyDiffPress(), alpha=0.8)),
+    "decoding_knorm_ema_a08": DecodingPress(base_press=EMAScorerPress(base_press=KnormPress(), alpha=0.8)),
+    # Learned scorer
+    "inertiakv_learned": InertiaLearnedPress(),
 }
