@@ -20,11 +20,14 @@ from kvpress.presses.decoding_press import DecodingPress
 from kvpress.presses.dms_press import DMSPress
 from kvpress.presses.dropkv_press import DropKVPress
 from kvpress.presses.duo_attention_press import DuoAttentionPress
+from kvpress.presses.ema_scorer_press import EMAScorerPress
 from kvpress.presses.entropy_gated_chunkkv_press import EntropyGatedChunkKVPress
 from kvpress.presses.expected_attention_press import ExpectedAttentionPress
 from kvpress.presses.expected_attention_with_stats import ExpectedAttentionStatsPress
 from kvpress.presses.fastkvzip_press import FastKVzipPress
 from kvpress.presses.finch_press import FinchPress
+from kvpress.presses.inertia_kv_press import InertiaKVPress
+from kvpress.presses.inertia_learned_press import InertiaLearnedPress
 from kvpress.presses.key_rerotation_press import KeyRerotationPress
 from kvpress.presses.keydiff_press import KeyDiffPress
 from kvpress.presses.knorm_press import KnormPress
@@ -49,12 +52,17 @@ from kvpress.presses.simlayerkv_press import SimLayerKVPress
 from kvpress.presses.snapkv_press import SnapKVPress
 from kvpress.presses.streaming_llm_press import StreamingLLMPress
 from kvpress.presses.think_press import ThinKPress
+from kvpress.presses.tova_ema_press import TOVAEMAPress
 from kvpress.presses.tova_press import TOVAPress
 
 # Patch the attention functions to support head-wise compression
 patch_attention_functions()
 
 __all__ = [
+    "EMAScorerPress",
+    "InertiaKVPress",
+    "InertiaLearnedPress",
+    "TOVAEMAPress",
     "CriticalAdaKVPress",
     "CriticalKVPress",
     "CURPress",
