@@ -1,40 +1,198 @@
-[![PyPI version](https://badge.fury.io/py/kvpress.svg)](https://badge.fury.io/py/kvpress)
+# InertiaKV
+
+Code for **What Matters for Aggressive Decoding-Time KV Eviction? Temporal Aggregation and Ranking Preservation** (EMNLP 2026 main conference).
+
+**Bo Zeng, Yu Zhao, Yefeng Liu, Zhihong Lu, Xuanfan Ni, Xintong Wang**
+
+**[Paper (arXiv:2609.03515)](https://arxiv.org/abs/2609.03515)**
+
+**InertiaKV, InertiaKV-Lazy, and Score-Free require no additional scorer training or learned-scorer checkpoints.** The `learned_scorer` directory supports only the optional learned-scorer comparison experiment.
+
 [![License](https://img.shields.io/badge/License-Apache%202.0-green.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Colab example notebook](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1JNvaTKuuAHrl49dYB9-mdEH_y52Ib-NP?usp=drive_link)
-[![Hugging Face Space](https://img.shields.io/badge/🤗%20Hugging%20Face-Space-blue)](https://huggingface.co/spaces/nvidia/kvpress)
-[![Blog post](https://img.shields.io/badge/🤗%20Hugging%20Face-Blog-blue)](https://huggingface.co/blog/nvidia/kvpress)
-[![Hugging Face Leaderboard](https://img.shields.io/badge/🤗%20HuggingFace-Leaderboard-orange)](https://huggingface.co/spaces/nvidia/kvpress-leaderboard)
-[![arXiv](https://img.shields.io/badge/arXiv-2510.00636-b31b1b.svg)](https://arxiv.org/abs/2510.00636v1)
 
+**Official repository:** [BobTsang-NLP/InertiaKV](https://github.com/BobTsang-NLP/InertiaKV)
 
-![kvpress](kvpress.jpg)
+## Overview
 
+This paper studies temporal aggregation and ranking preservation in aggressive
+decoding-time KV cache eviction. InertiaKV maintains a shared EMA score state
+using sequential decoder-layer updates. InertiaKV-Lazy reduces score-refresh
+frequency, while Score-Free scores once at the first decode step and reuses the
+resulting ranking. Compression is applied during decoding, not prefill; these
+methods do not reduce prefill peak memory.
 
-Deploying long-context LLMs is costly due to the linear growth of the key-value (KV) cache in transformer models. For example, handling 1M tokens with Llama 3.1-70B in float16 requires up to 330GB of memory. kvpress implements multiple KV cache compression methods and benchmarks using 🤗 transformers, aiming to simplify the development of new methods for researchers and developers in this field.
+| Paper operating point | Evaluation name | Score refresh |
+| --- | --- | --- |
+| InertiaKV | `inertiakv` | Every decode step |
+| InertiaKV-Lazy (Lazy4) | `inertiakv_lazy4` | Every four decode steps |
+| Score-Free | `inertiakv_scorefree` | First decode step only |
+
+## Code Ownership and Upstream Foundation
+
+This is a paper-specific research repository built on
+[NVIDIA/kvpress](https://github.com/NVIDIA/kvpress), not a claim of authorship over
+the entire KVPress framework. The upstream license and existing attribution are
+retained. Package imports remain under `kvpress` for compatibility.
+
+The paper-specific additions and integration are:
+
+- `kvpress/presses/inertia_kv_press.py`: InertiaKV, lazy refresh, Score-Free, and scorer/aggregation ablations.
+- `kvpress/presses/ema_scorer_press.py` and `kvpress/presses/tova_ema_press.py`: EMA-transfer comparisons.
+- `kvpress/presses/inertia_learned_press.py` and `learned_scorer/`: optional learned-scorer comparison code, not required by the main method.
+- `kvpress/__init__.py`, `kvpress/pipeline.py`, and `evaluation/evaluate_registry.py`: exports, decoding integration, and evaluation configurations.
+- `tests/presses/test_inertia_kv_press.py`: method semantics and small-model integration tests.
+
+The general framework, existing upstream baselines (including CaM), and other
+inherited utilities remain upstream work. Their reference documentation is
+retained in the collapsible section at the end of this page.
+
+## Release and Reproduction Status
+
+This integration targets kvpress 0.5.5, upstream commit
+`7136c224105ba7b046a6e538742c3589698680b8`. It retains the paper's
+layer-sequential EMA implementation; it is not a rerun of the paper experiments
+on the updated upstream baselines. The original experiment source is not included
+in this integration. Install this checkout rather than the upstream PyPI
+package to use these extensions:
+
+```bash
+uv sync --extra eval
+```
+
+The upstream CaM implementation is retained unchanged. Learned-scorer checkpoints
+are not bundled; `InertiaLearnedPress` requires a trusted checkpoint supplied by
+the user. Its supporting `learned_scorer` package is included in wheel builds.
+
+This checkout is an integration of the paper method into the pinned upstream
+version, not yet a complete, validated reproduction of all paper tables.
+Learned-scorer training and full benchmark results have not been validated in
+this integration. The local method test suite passed 11 tests with Transformers
+5.3.0, which is outside this checkout's declared `<5.3` dependency range;
+supported-version validation remains outstanding.
+
+## Paper Configurations
+
+`InertiaKVPress` is the decoding-time KV eviction method evaluated in **What Matters for Aggressive Decoding-Time KV Eviction? Temporal Aggregation and Ranking Preservation**. The paper evaluates three principal operating points:
+
+```python
+from kvpress import InertiaKVPress
+
+# Refresh scores at every decode step.
+full_refresh = InertiaKVPress(
+    alpha=0.8,
+    rom_ratio=0.0,
+    use_first_large_evict_rescue=False,
+    score_update_interval=1,
+)
+
+# Refresh scores once every four decode steps.
+lazy4 = InertiaKVPress(
+    alpha=0.8,
+    rom_ratio=0.0,
+    use_first_large_evict_rescue=False,
+    score_update_interval=4,
+)
+
+# Score during the first decode step, then never refresh again.
+score_free = InertiaKVPress(
+    alpha=0.8,
+    rom_ratio=0.0,
+    use_first_large_evict_rescue=False,
+    score_update_interval=999999,
+)
+```
+
+The same configurations are registered as `inertiakv`, `inertiakv_lazy4`, and `inertiakv_scorefree` in `evaluation/evaluate_registry.py`. For example:
+
+```bash
+python evaluation/evaluate.py \
+  --dataset ruler \
+  --data_dir 4096 \
+  --model meta-llama/Meta-Llama-3.1-8B-Instruct \
+  --press_name inertiakv_lazy4 \
+  --compression_ratio 0.9
+```
+
+### Evaluated aggregation semantics
+
+This artifact intentionally preserves the implementation used for the EMNLP experiments. At a refresh decode step, every eligible decoder layer immediately updates the shared momentum state:
+
+```text
+m[t, layer] = alpha * m[t, previous_layer] + (1 - alpha) * score[t, layer]
+m[t, first-layer input] = m[t - 1, last-layer output]
+```
+
+Consequently, `alpha` controls both temporal retention and geometric weighting toward later processed layers. In particular, `alpha=0` keeps the score from the last processed layer and is not a purely temporal ablation. Score-Free processes the eligible layers at the first decode step, freezes the resulting state, and performs no later score refresh. These details match the camera-ready paper and are covered by `tests/presses/test_inertia_kv_press.py`.
 
 ## Installation
 
-```bash
-pip install kvpress
-```
+Install this repository to use InertiaKV. `pip install kvpress` installs the
+upstream package and does not include these extensions.
 
 For a local installation, use [uv](https://docs.astral.sh/uv/):
 
 ```bash
-git clone https://github.com/NVIDIA/kvpress.git
-cd kvpress
+git clone https://github.com/BobTsang-NLP/InertiaKV-dev.git
+cd InertiaKV-dev
 uv sync
 ```
 
 To install with all optional dependencies, run:
 
 ```bash
-git clone https://github.com/NVIDIA/kvpress.git
-cd kvpress
+git clone https://github.com/BobTsang-NLP/InertiaKV-dev.git
+cd InertiaKV-dev
 uv sync --extra eval --extra flash-attn
 ```
 
-## Usage
+The clone commands currently target the development fork. Once it is renamed to
+`InertiaKV`, use `https://github.com/BobTsang-NLP/InertiaKV.git` and `cd InertiaKV`.
+
+## Method Tests
+
+After installing the checkout and pytest, run:
+
+```bash
+python -m pytest -q tests/presses/test_inertia_kv_press.py
+```
+
+These tests check aggregation semantics, refresh schedules, decoding-only
+compression, and pipeline integration. They do not reproduce the paper's
+benchmark scores.
+
+## Citation
+
+If you use InertiaKV or its paper-specific experiments, please cite
+**What Matters for Aggressive Decoding-Time KV Eviction? Temporal Aggregation and Ranking Preservation**
+(EMNLP 2026). The following entry cites the publicly available arXiv preprint;
+it does not invent proceedings metadata:
+
+```bibtex
+@article{zeng2026inertiakv,
+  title={What Matters for Aggressive Decoding-Time KV Eviction? Temporal Aggregation and Ranking Preservation},
+  author={Zeng, Bo and Zhao, Yu and Liu, Yefeng and Lu, Zhihong and Ni, Xuanfan and Wang, Xintong},
+  journal={arXiv preprint arXiv:2609.03515},
+  year={2026},
+  url={https://arxiv.org/abs/2609.03515}
+}
+```
+
+The upstream KVPress citation is retained separately in the reference section
+below; it is not the citation for the InertiaKV paper.
+
+## Upstream KVPress Reference
+
+<details>
+<summary>Expand inherited KVPress documentation, baselines, and upstream citation</summary>
+
+The following documentation is inherited from NVIDIA/kvpress. Its references to
+"we", baseline support, and framework features describe the upstream project,
+not independently validated InertiaKV results. The main-method instructions are
+in the sections above.
+
+![kvpress](kvpress.jpg)
+
+## Upstream Usage
 
 KVPress provides a set of "presses" that compress the KV cache during the prefilling-phase. Each press is associated with a `compression_ratio` attribute that measures the compression of the cache. The easiest way to use a press is through our custom `KVPressTextGenerationPipeline`. It is automatically registered as a transformers pipeline with the name "kv-press-text-generation" when kvpress is imported and handles chat templates and tokenization for you:
 
@@ -96,7 +254,7 @@ response = pipe(context, question=question, press=decoding_press)["answer"]
 
 </details>
 
-## Available presses
+## Upstream and Integrated Presses
 
 All current presses are training free and inherit from `BasePress` ([source](kvpress/presses/base_press.py)). 
 
@@ -187,9 +345,9 @@ By default, the `DynamicCache` is used (no quantization).
 
 We welcome contributions! To add a new press, simply open an issue or submit a pull request. Check the [new_press.ipynb](notebooks/new_press.ipynb) notebook for a step-by-step guide.
 
-## Citation
+## Upstream Citation
 
-If you use KVPress in your research, please cite our paper:
+The following citation is for the upstream work, not the InertiaKV paper:
 
 ```bibtex
 @article{devoto2025expectedattention,
@@ -351,3 +509,7 @@ context = "A very long context that will be compressed during prefill"
 question = "Generate a detailed analysis that will be compressed during decoding"
 response = pipe(context, question=question, press=combined_press)["answer"]
 ```
+
+</details>
+
+</details>
