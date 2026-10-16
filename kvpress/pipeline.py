@@ -15,6 +15,8 @@ from kvpress.presses.base_press import BasePress
 from kvpress.presses.decoding_press import DecodingPress
 from kvpress.presses.dms_press import DMSPress
 from kvpress.presses.finch_press import FinchPress
+from kvpress.presses.inertia_kv_press import InertiaKVPress
+from kvpress.presses.inertia_learned_press import InertiaLearnedPress
 from kvpress.presses.key_rerotation_press import KeyRerotationPress
 from kvpress.presses.prefill_decoding_press import PrefillDecodingPress
 from kvpress.presses.restorekv_press import RestoreKVPress
@@ -199,7 +201,8 @@ class KVPressTextGenerationPipeline(Pipeline):
         list[str]
             Generated answers for each input question.
         """
-        if isinstance(press, (DecodingPress, PrefillDecodingPress)) and len(input_tensors["questions_ids"]) > 1:
+        decoding_presses = (DecodingPress, PrefillDecodingPress, InertiaKVPress, InertiaLearnedPress)
+        if isinstance(press, decoding_presses) and len(input_tensors["questions_ids"]) > 1:
             raise ValueError(
                 "DecodingPress is not compatible with multiple questions. Please specify a single question."
             )
@@ -212,7 +215,9 @@ class KVPressTextGenerationPipeline(Pipeline):
             cache = DynamicCache()
 
         # We only perform prefill compression if the press is a prefill press
-        perform_prefill_compression = press is not None and not isinstance(press, DecodingPress)
+        perform_prefill_compression = press is not None and not isinstance(
+            press, (DecodingPress, InertiaKVPress, InertiaLearnedPress)
+        )
         with press(self.model) if perform_prefill_compression else contextlib.nullcontext():
             # We run the model without the lm head for pre-filling.
             self.model.model(
@@ -227,7 +232,7 @@ class KVPressTextGenerationPipeline(Pipeline):
             context_length = cache.get_seq_length()
 
         # We only perform decoding compression if the press is a decoding or prefill decoding press
-        perform_decoding_compression = press is not None and isinstance(press, (DecodingPress, PrefillDecodingPress))
+        perform_decoding_compression = press is not None and isinstance(press, decoding_presses)
         if isinstance(press, DMSPress):
             perform_decoding_compression = press.decoding
         with press(self.model) if perform_decoding_compression else contextlib.nullcontext():
